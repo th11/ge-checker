@@ -7,6 +7,9 @@ var fs = require('fs');
 
 var VERBOSE = false;
 var loadInProgress = false;
+var schedDate;
+var betterDate;
+var full_date;
 
 // Calculate path of this file
 var PWD = '';
@@ -63,9 +66,9 @@ page.onCallback = function(query, msg) {
     if (query == 'report-interview-time') {
         if (VERBOSE) { console.log('Next available appointment is at: ' + msg); }
         else { console.log(msg); }
-        return;  
+        return;
     }
-    if (query == 'report-no-interviews') {                                                                                                                                                  
+    if (query == 'report-no-interviews') {
         if (VERBOSE) { console.log('No new interviews available. Please try again later.'); }
         else { console.log('None'); }
         return;
@@ -89,7 +92,7 @@ var steps = [
             console.log('On GOES login page...');
             document.querySelector('input[name=j_username]').value = window.callPhantom('username');
 
-            /* The GE Login page limits passwords to only 12 characters, but phantomjs can get around 
+            /* The GE Login page limits passwords to only 12 characters, but phantomjs can get around
                this limitation, which causes the fatal error "Unable to find terms acceptance button" */
             document.querySelector('input[name=j_password]').value = window.callPhantom('password').substring(0,12);
             document.querySelector('form[action=j_security_check]').submit();
@@ -98,9 +101,9 @@ var steps = [
     },
     function() { // Accept terms
         page.evaluate(function() {
-            
+
 	    submitHome();
-	    
+
             console.log('Bypassing human check...');
         });
     },
@@ -112,7 +115,7 @@ var steps = [
                 ev.initEvent("click", true, true);
                 el.dispatchEvent(ev);
             }
-            
+
             var $manageAptBtn = document.querySelector('.bluebutton[name=manageAptm]');
             if (!$manageAptBtn) {
                 return window.callPhantom('fatal-error', 'Unable to find Manage Appointment button');
@@ -123,22 +126,27 @@ var steps = [
         });
     },
     function() {
-        page.evaluate(function() {
+        schedDate = page.evaluate(function() {
 
             function fireClick(el) {
                 var ev = document.createEvent("MouseEvents");
                 ev.initEvent("click", true, true);
                 el.dispatchEvent(ev);
             }
-            
+
+            var intDate = document.querySelectorAll('.maincontainer p')[4].childNodes[1].textContent;
+
+            console.log('INTERVIEW_DATE:' + intDate.toString());
+
             var $rescheduleBtn = document.querySelector('input[name=reschedule]');
-    
+
             if (!$rescheduleBtn) {
                 return window.callPhantom('fatal-error', 'Unable to find reschedule button. Is it after or less than 24 hrs before your appointment?');
             }
 
             fireClick($rescheduleBtn);
             console.log('Entering rescheduling selection page...');
+            return intDate;
         });
     },
     function() {
@@ -158,8 +166,13 @@ var steps = [
         }, settings.enrollment_location_id.toString());
     },
     function() {
+        betterDate = page.evaluate(function(current_date) {
 
-        page.evaluate(function() {
+            function fireClick(el) {
+                var ev = document.createEvent("MouseEvents");
+                ev.initEvent("click", true, true);
+                el.dispatchEvent(ev);
+            }
 
             // If there are no more appointments available at all, there will be a message saying so.
             try {
@@ -173,11 +186,50 @@ var steps = [
             var date = document.querySelector('.date table tr:first-child td:first-child').innerHTML;
             var month_year = document.querySelector('.date table tr:last-child td:last-child div').innerHTML;
 
-            var full_date = month_year.replace(',', ' ' + date + ',');
-            // console.log('');
-            window.callPhantom('report-interview-time', full_date)
-            // console.log('The next available appointment is on ' + full_date + '.');
-        });
+            full_date = month_year.replace(',', ' ' + date + ',');
+
+            var currDate = new Date(current_date);
+            var newDate = new Date(full_date);
+
+            console.log('currDate' + currDate.toString());
+            console.log('newDate' + newDate.toString());
+
+            var appt = document.querySelector('.entry');
+
+            window.callPhantom('report-interview-time', full_date);
+            console.log('Current scheduled time: ' + current_date);
+
+            var dayNum = newDate.getDay();
+
+            var earlierDate = currDate > newDate;
+
+            console.log("BETTER DATE: " + earlierDate.toString());
+            // and day not on friday, sat, sun
+            if (earlierDate && dayNum != 0 && dayNum != 6 && dayNum != 5) {
+                fireClick(appt);
+                return earlierDate;
+            }
+        }, schedDate.toString());
+    },
+    function() {
+        page.evaluate(function(betterDate) {
+            console.log('On change appointment page');
+
+            function fireClick(el) {
+                var ev = document.createEvent("MouseEvents");
+                ev.initEvent("click", true, true);
+                el.dispatchEvent(ev);
+            }
+
+            if (betterDate) {
+                console.log('Scheduling earlier appointment');
+                document.querySelector('input[name=comments]').value = "found earlier appt";
+                fireClick(document.querySelector('input[name=Confirm]'));
+                return;
+            }
+
+            console.log('No Better date');
+        }, betterDate);
     }
 ];
 
